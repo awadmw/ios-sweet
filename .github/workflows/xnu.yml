@@ -211,21 +211,18 @@ jobs:
             exit "$rc"
           fi
 
-      - name: Upload failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-failure-${{ inputs.machine_config || 'SWEET' }}
-          path: |
-            fail-errors.log
-            fail-tail.log
-          if-no-files-found: ignore
-
       - name: Verify and collect kernelcache
         run: |
           set -euo pipefail
           KC="dxb/fakeroot/oss-xnu.macOS.${MACOS_VERSION}.kc.${MACHINE_LOWER}"
-          test -s "$KC"
+          echo "KC=${KC}"
+          ls -la dxb/fakeroot 2>&1 | tail -20 || true
+          find dxb -maxdepth 4 -name '*.kc*' -print 2>/dev/null | tail -20 || true
+          grep -n -E 'KC_INPUT|KC_KDK|KC_OUTPUT|Building kernel collection|kmutil create|build_kc' "${GITHUB_WORKSPACE}/build.log" | tail -20 || true
+          if [ ! -s "$KC" ]; then
+            echo "::error::kernelcache $KC was not produced"
+            exit 1
+          fi
           kmutil inspect --show-kernel-uuid -B "$KC"
           mkdir -p out
           cp "$KC" "out/kernelcache.${MACHINE_LOWER}"
@@ -247,6 +244,22 @@ jobs:
             > out/build-metadata.json
           cat out/build-metadata.json
 
+      - name: Collect failure diagnostics
+        if: failure()
+        run: |
+          set +e
+          tail -n 400 "${GITHUB_WORKSPACE}/build.log" > fail-tail.log 2>/dev/null
+          grep -n -E 'error:|Error Domain|KC_|kernelcache|kmutil|Not produced' "${GITHUB_WORKSPACE}/build.log" | tail -80 > fail-errors.log 2>/dev/null
+          ls -la fail-tail.log fail-errors.log
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-${{ inputs.machine_config || 'SWEET' }}
+          path: |
+            fail-errors.log
+            fail-tail.log
+          if-no-files-found: ignore
       - name: Package build tree for local compiles
         if: always()
         run: |
