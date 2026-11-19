@@ -48,29 +48,46 @@ jobs:
           git init -q dxb
           git -C dxb fetch -q --depth 1 "$DXB_REPO" "$DXB_SHA"
           git -C dxb checkout -q FETCH_HEAD
-          # DXB's -k path inspects the host KernelManagement cache with ipsw.
-          # On macOS 15 that incorrectly requires a KDK for the host build.
-          # Use only the pinned MACOS_VERSION KDK and make a kernel-only boot KC.
+          # Replace DXB's KC helper: it probes the host with ipsw and its
+          # version_lte/sort -V gate can leave KDK_FLAG empty. Use one explicit,
+          # auditable command with the pinned KDK and the plain-arm64 kernel.
           python3 - <<'PY'
           from pathlib import Path
           p = Path("dxb/build.sh")
-          lines = p.read_text().splitlines()
-          out = []
-          removed_host_inspect = False
-          removed_ipsw_install = False
-          for line in lines:
-              if not removed_host_inspect and "$(ipsw kernel kmutil inspect -x --filter" in line:
-                  assert out[-1].rstrip().endswith("\\"), out[-1]
-                  out[-1] = out[-1].rstrip()[:-1].rstrip()
-                  out.append("                # Host-independent kernel-only boot collection from the pinned KDK.")
-                  removed_host_inspect = True
-                  continue
-              if line == "        install_ipsw":
-                  removed_ipsw_install = True
-                  continue
-              out.append(line)
-          assert removed_host_inspect and removed_ipsw_install
-          p.write_text("\n".join(out) + "\n")
+          s = p.read_text()
+          start = s.index("build_kc() {")
+          end = s.index("\nmain() {", start)
+          replacement = r'''build_kc() {
+              if [ "$BUILDLIB" -ne "0" ]; then
+                  info "Skipping kernel collection build because --lib was requested"
+                  return
+              fi
+              local kernel_path="${BUILD_DIR}/xnu.obj/kernel.${KERNEL_TYPE}"
+              local machine_lower
+              machine_lower=$(echo "$MACHINE_CONFIG" | tr '[:upper:]' '[:lower:]')
+              local output_path="${DSTROOT}/oss-xnu.macOS.${MACOS_VERSION}.kc.${machine_lower}"
+              test -s "${kernel_path}"
+              test -d "${KDKROOT}"
+              echo "KC_INPUT=${kernel_path}"
+              echo "KC_KDK=${KDKROOT}"
+              echo "KC_OUTPUT=${output_path}"
+              file "${kernel_path}"
+              set -x
+              kmutil create -v -V "${KC_VARIANT}" -a arm64 -n boot -s none \
+                  --kdk "${KDKROOT}" \
+                  -B "${output_path}" \
+                  -k "${kernel_path}"
+              set +x
+              test -s "${output_path}"
+              file "${output_path}"
+              echo "KC Build Done: ${output_path}"
+          }
+          '''
+          s = s[:start] + replacement + s[end:]
+          assert s.count("        install_ipsw\n") == 1
+          s = s.replace("        install_ipsw\n", "", 1)
+          assert "$(ipsw kernel kmutil inspect" not in s
+          p.write_text(s)
           PY
           cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
           # libfirehose_kernel is built arm64e-only; these targets are plain arm64.
@@ -156,6 +173,7 @@ jobs:
           set -euo pipefail
           KC="dxb/fakeroot/oss-xnu.macOS.${MACOS_VERSION}.kc.${MACHINE_LOWER}"
           test -s "$KC"
+          kmutil inspect --show-kernel-uuid -B "$KC"
           mkdir -p out
           cp "$KC" "out/kernelcache.${MACHINE_LOWER}"
           file "out/kernelcache.${MACHINE_LOWER}"
