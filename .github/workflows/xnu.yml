@@ -162,6 +162,18 @@ jobs:
           xcodebuild -version
           xcrun --find iig
 
+      - name: Install host KDK for kmutil
+        # kmutil on macOS 15.8.2 (24H232) refuses to create any collection
+        # until the KDK matching the host build is installed, even with --kdk.
+        run: |
+          set -euo pipefail
+          test "$(sw_vers -buildVersion)" = "24H232"
+          HOST_KDK_URL="https://github.com/dortania/KdkSupportPkg/releases/download/24H232/Kernel_Debug_Kit_15.8.2_build_24H232.dmg"
+          curl -fL --retry 3 --connect-timeout 60 --max-time 900 -o /tmp/host-kdk.dmg "${HOST_KDK_URL}"
+          hdiutil attach /tmp/host-kdk.dmg
+          sudo installer -pkg '/Volumes/Kernel Debug Kit/KernelDebugKit.pkg' -target /
+          hdiutil detach '/Volumes/Kernel Debug Kit'
+          test -d /Library/Developer/KDKs/KDK_15.8.2_24H232.kdk
       - name: Build
         working-directory: dxb
         env:
