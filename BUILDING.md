@@ -62,6 +62,15 @@ workflow 固定 checkout `DXB_SHA`，应用 `xnu/patches/`，随后执行
 `bash build.sh -k`。`-k` 设置 DXB 的 `BUILDKC=1`，不能省略。`Build` 步骤成功必须包含 XNU 编译和
 `kmutil create`，单独 checkout 或复制配置不算成功。
 
+ios-sweet 的实际启动链由 `tools/mkpayload.py` 处理 plain-arm64 raw kernel，明确不依赖
+kmutil/iBoot。本阶段按任务要求另行生成 **kernel-only kernelcache**：使用 `-a arm64 -x`
+且不传任何 `-b` kext，避免把 KDK 中 arm64e-only 扩展混入 plain-arm64 内核。这个 KC
+用于构建链验收，**不是 ios-sweet 的可启动 payload，也不表示已经具备 senna 驱动**。
+
+macOS 15.8.2 (24H232) 的 kmutil 会检查宿主匹配 KDK。workflow 因此从固定的
+KdkSupportPkg `24H232` release 安装宿主 KDK，同时仍用 KDK 13.5 作为目标 KDK；
+二者用途不同，不能互相替代。
+
 ## 产物与验收
 
 成功运行上传：
@@ -95,8 +104,13 @@ DXB commit 和实际 Xcode 路径。SENNA 的 `runtime_support` 必须为
 | 项目 | 结果 |
 |---|---|
 | 原始 workflow / run 1 | 未进入编译：GitHub 不支持 `macos-14-arm64-us-default` |
-| SWEET / run 2 / macOS 15 | 原始内核编译通过；未传 DXB `-k`，没有 kernelcache，待最终运行验收 |
-| SENNA / macOS 15 | 等待最终运行结果 |
+| SWEET / run 2 / macOS 15 | 原始内核编译通过；未传 DXB `-k`，没有 kernelcache |
+| SWEET / run 5–7 | XNU 编译通过；kmutil 报宿主 KDK 24H232 缺失（Code 34） |
+| SWEET / run 8 | 宿主 KDK 已安装；无 `-x` 扫描 KDK 导致 AppleRTC/IOACPIFamily 依赖失败（Code 71） |
+| SWEET / run 9 | arm64 KC 无法接收 arm64e-only AppleUSBTDM（Code 31） |
+| SWEET / run 10 | arm64e KC 无法接收 plain-arm64 kernel（Code 31） |
+| SWEET / run 11 | kernel-only arm64 KC，等待最终结果 |
+| SENNA / macOS 15 | 等待 SWEET 基线通过后运行 |
 
 最终通过标准是 SWEET 与 SENNA 两个 GitHub Actions job 都为绿色，且各自 artifact
-含非空 kernelcache 和匹配元数据。编译成功不等于实机启动成功。
+含非空 kernelcache、`kmutil inspect` UUID 和匹配元数据。编译成功不等于实机启动成功。

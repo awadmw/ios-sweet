@@ -196,7 +196,30 @@ jobs:
         working-directory: dxb
         env:
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
-        run: bash build.sh -k
+        run: |
+          set +e
+          bash build.sh -k 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
+          rc=$?
+          set -e
+          grep -c 'XNU Build Done' "${GITHUB_WORKSPACE}/build.log" || true
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::build.sh exited with code ${rc}"
+            LAST=$(grep -n -E 'error:|undefined symbol|Error Domain|\*\*\* ' "${GITHUB_WORKSPACE}/build.log" | tail -3 | tr '\n' ' ' | cut -c1-900)
+            echo "::error::last errors: ${LAST}"
+            grep -n -E 'error:|undefined symbol|\*\*\* ' "${GITHUB_WORKSPACE}/build.log" | tail -60 > "${GITHUB_WORKSPACE}/fail-errors.log" || true
+            tail -n 400 "${GITHUB_WORKSPACE}/build.log" > "${GITHUB_WORKSPACE}/fail-tail.log" || true
+            exit "$rc"
+          fi
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-${{ inputs.machine_config || 'SWEET' }}
+          path: |
+            fail-errors.log
+            fail-tail.log
+          if-no-files-found: ignore
 
       - name: Verify and collect kernelcache
         run: |
