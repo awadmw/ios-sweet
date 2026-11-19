@@ -71,15 +71,25 @@ jobs:
               echo "KC_INPUT=${kernel_path}"
               echo "KC_KDK=${KDKROOT}"
               echo "KC_OUTPUT=${output_path}"
+              echo "KC_DSTROOT=${DSTROOT}"
               file "${kernel_path}"
+              set +e
               set -x
               kmutil create -v -V "${KC_VARIANT}" -a arm64 -n boot -s none \
                   --kdk "${KDKROOT}" \
                   -B "${output_path}" \
                   -k "${kernel_path}" \
                   -x
+              rc=$?
               set +x
-              test -s "${output_path}"
+              set -e
+              echo "KC_EXIT=${rc}"
+              ls -la "${DSTROOT}" | tail -30 || true
+              find "${DSTROOT}" -maxdepth 2 -name '*oss-xnu*' -print || true
+              if [ ! -s "${output_path}" ]; then
+                  echo "::error::kmutil did not write ${output_path}"
+                  exit 1
+              fi
               file "${output_path}"
               echo "KC Build Done: ${output_path}"
           }
