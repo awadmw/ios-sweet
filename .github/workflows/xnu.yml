@@ -48,9 +48,9 @@ jobs:
           git init -q dxb
           git -C dxb fetch -q --depth 1 "$DXB_REPO" "$DXB_SHA"
           git -C dxb checkout -q FETCH_HEAD
-          # Replace DXB's KC helper: it probes the host with ipsw and its
-          # version_lte/sort -V gate can leave KDK_FLAG empty. Use one explicit,
-          # auditable command with the pinned KDK and the plain-arm64 kernel.
+          # Replace only DXB's KC helper to use the pinned KDK and plain arm64.
+          # Keep ipsw's explicit-only extension set: without it kmutil scans all
+          # KDK extensions and fails on AppleRTC's missing IOACPIFamily dependency.
           python3 - <<'PY'
           from pathlib import Path
           p = Path("dxb/build.sh")
@@ -76,7 +76,8 @@ jobs:
               kmutil create -v -V "${KC_VARIANT}" -a arm64 -n boot -s none \
                   --kdk "${KDKROOT}" \
                   -B "${output_path}" \
-                  -k "${kernel_path}"
+                  -k "${kernel_path}" \
+                  -x $(ipsw kernel kmutil inspect -x --filter "${KC_FILTER}")
               set +x
               test -s "${output_path}"
               file "${output_path}"
@@ -85,8 +86,7 @@ jobs:
           '''
           s = s[:start] + replacement + s[end:]
           assert s.count("        install_ipsw\n") == 1
-          s = s.replace("        install_ipsw\n", "", 1)
-          assert "$(ipsw kernel kmutil inspect" not in s
+          assert s.count("-x $(ipsw kernel kmutil inspect") == 1
           p.write_text(s)
           PY
           cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
