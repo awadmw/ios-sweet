@@ -48,9 +48,9 @@ jobs:
           git init -q dxb
           git -C dxb fetch -q --depth 1 "$DXB_REPO" "$DXB_SHA"
           git -C dxb checkout -q FETCH_HEAD
-          # Replace only DXB's KC helper to use the pinned KDK explicitly.
-          # Keep DXB's arm64e KC architecture and ipsw explicit-only extension
-          # set: KDK kexts such as AppleUSBTDM lack a plain-arm64 slice.
+          # ios-sweet's boot path uses a plain-arm64 raw kernel payload, not
+          # KDK kexts. For this compile-only artifact, create a kernel-only KC:
+          # -x with no -b avoids mixing arm64e-only KDK kexts into the KC.
           python3 - <<'PY'
           from pathlib import Path
           p = Path("dxb/build.sh")
@@ -73,11 +73,11 @@ jobs:
               echo "KC_OUTPUT=${output_path}"
               file "${kernel_path}"
               set -x
-              kmutil create -v -V "${KC_VARIANT}" -a arm64e -n boot -s none \
+              kmutil create -v -V "${KC_VARIANT}" -a arm64 -n boot -s none \
                   --kdk "${KDKROOT}" \
                   -B "${output_path}" \
                   -k "${kernel_path}" \
-                  -x $(ipsw kernel kmutil inspect -x --filter "${KC_FILTER}")
+                  -x
               set +x
               test -s "${output_path}"
               file "${output_path}"
@@ -86,7 +86,7 @@ jobs:
           '''
           s = s[:start] + replacement + s[end:]
           assert s.count("        install_ipsw\n") == 1
-          assert s.count("-x $(ipsw kernel kmutil inspect") == 1
+          assert s.count("build_kc() {") == 1
           p.write_text(s)
           PY
           cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
