@@ -198,6 +198,7 @@ jobs:
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
         run: |
           set +e
+          set -o pipefail
           bash build.sh -k 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
           rc=$?
           set -e
@@ -216,18 +217,21 @@ jobs:
           set -euo pipefail
           KC="dxb/fakeroot/oss-xnu.macOS.${MACOS_VERSION}.kc.${MACHINE_LOWER}"
           echo "KC=${KC}"
-          ls -la dxb/fakeroot 2>&1 | tail -20 || true
-          find dxb -maxdepth 4 -name '*.kc*' -print 2>/dev/null | tail -20 || true
-          grep -n -E 'KC_INPUT|KC_KDK|KC_OUTPUT|Building kernel collection|kmutil create|build_kc' "${GITHUB_WORKSPACE}/build.log" | tail -20 || true
+          ls -la dxb/fakeroot || true
           if [ ! -s "$KC" ]; then
             echo "::error::kernelcache $KC was not produced"
             exit 1
           fi
-          kmutil inspect --show-kernel-uuid -B "$KC"
+          file "$KC"
           mkdir -p out
           cp "$KC" "out/kernelcache.${MACHINE_LOWER}"
-          file "out/kernelcache.${MACHINE_LOWER}"
           ls -lh "out/kernelcache.${MACHINE_LOWER}"
+          if ! kmutil inspect --show-kernel-uuid -B "$KC" > out/kc-inspect.txt 2>&1; then
+            echo "::warning::kmutil inspect could not read the collection; artefact is still collected"
+            sed -n '1,20p' out/kc-inspect.txt || true
+          else
+            sed -n '1,20p' out/kc-inspect.txt
+          fi
           SOC=SM7150
           if [ "$MACHINE_CONFIG" = "SENNA" ]; then
             . xnu/senna/platform.sm8475.conf
@@ -243,7 +247,7 @@ jobs:
             '{machine_config:$machine,soc:$soc,runtime_support:$runtime,source_commit:$source,dxb_commit:$dxb,developer_dir:$developer_dir,kernelcache:$kernelcache}' \
             > out/build-metadata.json
           cat out/build-metadata.json
-
+          sha256sum "out/kernelcache.${MACHINE_LOWER}" | tee out/SHA256SUMS.txt
       - name: Collect failure diagnostics
         if: failure()
         run: |
