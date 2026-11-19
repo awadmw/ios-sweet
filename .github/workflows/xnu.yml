@@ -48,6 +48,30 @@ jobs:
           git init -q dxb
           git -C dxb fetch -q --depth 1 "$DXB_REPO" "$DXB_SHA"
           git -C dxb checkout -q FETCH_HEAD
+          # DXB's -k path inspects the host KernelManagement cache with ipsw.
+          # On macOS 15 that incorrectly requires a KDK for the host build.
+          # Use only the pinned MACOS_VERSION KDK and make a kernel-only boot KC.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("dxb/build.sh")
+          lines = p.read_text().splitlines()
+          out = []
+          removed_host_inspect = False
+          removed_ipsw_install = False
+          for line in lines:
+              if not removed_host_inspect and "$(ipsw kernel kmutil inspect -x --filter" in line:
+                  assert out[-1].rstrip().endswith("\\"), out[-1]
+                  out[-1] = out[-1].rstrip()[:-1].rstrip()
+                  out.append("                # Host-independent kernel-only boot collection from the pinned KDK.")
+                  removed_host_inspect = True
+                  continue
+              if line == "        install_ipsw":
+                  removed_ipsw_install = True
+                  continue
+              out.append(line)
+          assert removed_host_inspect and removed_ipsw_install
+          p.write_text("\n".join(out) + "\n")
+          PY
           cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
           # libfirehose_kernel is built arm64e-only; these targets are plain arm64.
           sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"/' dxb/build.sh
@@ -55,11 +79,14 @@ jobs:
           MACHINE_LOWER=$(echo "$MACHINE_CONFIG" | tr '[:upper:]' '[:lower:]')
           echo "MACHINE_LOWER=$MACHINE_LOWER" >> "$GITHUB_ENV"
           if [ "$MACHINE_CONFIG" = "SENNA" ]; then
-            # The senna directory intentionally contains only a zero-byte patch
-            # placeholder and the SM8475 platform configuration. Do not feed an
-            # empty file to git apply. The generated target is a compile alias
+            # The senna directory intentionally contains only a comments-only patch
+            # placeholder and the SM8475 platform configuration. Do not feed a
+            # comments-only file to git apply. The generated target is a compile alias
             # for SWEET's board implementation, not a hardware bring-up patch.
-            test ! -s xnu/senna/0001-empty.patch
+            if grep -Ev '^[[:space:]]*(#|$)' xnu/senna/0001-empty.patch | grep -q .; then
+              echo 'senna empty patch contains a functional change' >&2
+              exit 1
+            fi
             test -f xnu/senna/platform.sm8475.conf
             cat > /tmp/prepare-senna.sh <<'SENNA_PREPARE'
           if [ "$MACHINE_CONFIG" = "SENNA" ]; then
@@ -182,15 +209,13 @@ jobs:
           ls -la out/kdk-libs
 
       - name: Collect
-        if: always()
         run: |
           mkdir -p out
           cp -R dxb/fakeroot/System/Library/Kernels/. out/ 2>/dev/null || true
           ls -la out
-          (cd out && shasum -a 256 kernel.* kernelcache.* > SHA256SUMS) || true
+          (cd out && find . -maxdepth 1 -type f \( -name 'kernel.*' -o -name 'kernelcache.*' \) -exec shasum -a 256 {} + > SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: xnu-kernelcache-${{ env.MACHINE_CONFIG }}
           path: out/
