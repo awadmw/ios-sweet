@@ -109,7 +109,7 @@ jobs:
           # kmutil requires split seg v2. Upstream XNU defines the needed
           # linker flags for arm64e but not for ios-sweet's plain-arm64 override.
           cat > /tmp/prepare-kc-link.sh <<'KC_LINK'
-          python3 - "${WORK_DIR}/xnu/makedefs/MakeInc.def" <<'PY'
+          python3 - "${WORK_DIR}/xnu/makedefs/MakeInc.def" "${WORK_DIR}/xnu/bsd/conf/Makefile.template" <<'PY'
           from pathlib import Path
           import sys
           path = Path(sys.argv[1])
@@ -148,12 +148,14 @@ jobs:
               test "$XNU_BOARD_CONFIG" = "SWEET"
               test "$RUNTIME_SUPPORT" = "not-implemented"
               cp "${WORK_DIR}/xnu/config/MASTER.arm64.sweet" "${WORK_DIR}/xnu/config/MASTER.arm64.senna"
-              python3 - "${WORK_DIR}/xnu/makedefs/MakeInc.def" <<'PY'
+              python3 - "${WORK_DIR}/xnu/makedefs/MakeInc.def" "${WORK_DIR}/xnu/bsd/conf/Makefile.template" <<'PY'
           import pathlib
           import re
           import sys
 
           path = pathlib.Path(sys.argv[1])
+          path2 = pathlib.Path(sys.argv[2])
+          text2 = path2.read_text()
           text = path.read_text()
           old = "SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE SWEET"
           new = old + " SENNA"
@@ -168,8 +170,16 @@ jobs:
           assert text.count(old) == 1, "plain-arm64 condition not found"
           text = text.replace(old, new, 1)
           path.write_text(text)
+          guard = "ifeq ($(CURRENT_MACHINE_CONFIG),SWEET)"
+          widened = "ifneq ($(filter $(CURRENT_MACHINE_CONFIG),SWEET SENNA),)"
+          wideners = text2.count(guard)
+          assert wideners >= 1, "SWEET machine-config guard not found in Makefile.template"
+          text2 = text2.replace(guard, widened)
+          path2.write_text(text2)
+          print(f"machine-config guards widened: {wideners}")
           PY
               grep -n 'SUPPORTED_ARM64_MACHINE_CONFIGS\|MACHINE_FLAGS_ARM64_SENNA\|filter $(CURRENT_MACHINE_CONFIG)' "${WORK_DIR}/xnu/makedefs/MakeInc.def"
+              grep -n 'filter $(CURRENT_MACHINE_CONFIG),SWEET SENNA' "${WORK_DIR}/xnu/bsd/conf/Makefile.template"
               test -s "${WORK_DIR}/xnu/config/MASTER.arm64.senna"
           fi
           SENNA_PREPARE
