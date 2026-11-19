@@ -154,8 +154,6 @@ jobs:
           import sys
 
           path = pathlib.Path(sys.argv[1])
-          path2 = pathlib.Path(sys.argv[2])
-          text2 = path2.read_text()
           text = path.read_text()
           old = "SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE SWEET"
           new = old + " SENNA"
@@ -172,14 +170,18 @@ jobs:
           path.write_text(text)
           guard = "ifeq ($(CURRENT_MACHINE_CONFIG),SWEET)"
           widened = "ifneq ($(filter $(CURRENT_MACHINE_CONFIG),SWEET SENNA),)"
-          wideners = text2.count(guard)
-          assert wideners >= 1, "SWEET machine-config guard not found in Makefile.template"
-          text2 = text2.replace(guard, widened)
-          path2.write_text(text2)
-          print(f"machine-config guards widened: {wideners}")
+          guards = 0
+          for tpl in sorted(pathlib.Path(sys.argv[1]).parents[1].glob("*/conf/Makefile.template")):
+              body = tpl.read_text()
+              hits = body.count(guard)
+              if hits:
+                  tpl.write_text(body.replace(guard, widened))
+                  print(f"widened {hits} guard(s) in {tpl}")
+                  guards += hits
+          assert guards >= 2, f"expected sweet guards in bsd and libkern conf templates, found {guards}"
           PY
               grep -n 'SUPPORTED_ARM64_MACHINE_CONFIGS\|MACHINE_FLAGS_ARM64_SENNA\|filter $(CURRENT_MACHINE_CONFIG)' "${WORK_DIR}/xnu/makedefs/MakeInc.def"
-              grep -n 'filter $(CURRENT_MACHINE_CONFIG),SWEET SENNA' "${WORK_DIR}/xnu/bsd/conf/Makefile.template"
+              grep -ln 'filter $(CURRENT_MACHINE_CONFIG),SWEET SENNA' "${WORK_DIR}"/xnu/*/conf/Makefile.template
               test -s "${WORK_DIR}/xnu/config/MASTER.arm64.senna"
           fi
           SENNA_PREPARE
