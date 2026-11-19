@@ -93,6 +93,24 @@ jobs:
           # libfirehose_kernel is built arm64e-only; these targets are plain arm64.
           sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"/' dxb/build.sh
           grep -c 'VALID_ARCHS="x86_64 arm64e arm64"' dxb/build.sh
+          # kmutil requires split seg v2. Upstream XNU defines the needed
+          # linker flags for arm64e but not for ios-sweet's plain-arm64 override.
+          cat > /tmp/prepare-kc-link.sh <<'KC_LINK'
+          python3 - "${WORK_DIR}/xnu/makedefs/MakeInc.def" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          marker = "LDFLAGS_KERNEL_ONLY_SUBARCH_x86_64 ="
+          addition = "LDFLAGS_KERNEL_ONLY_SUBARCH_arm64 = -Wl,-add_split_seg_info -Wl,-kernel\n\n"
+          assert text.count(marker) == 1
+          assert "LDFLAGS_KERNEL_ONLY_SUBARCH_arm64 =" not in text
+          path.write_text(text.replace(marker, addition + marker, 1))
+          PY
+          grep -n 'LDFLAGS_KERNEL_ONLY_SUBARCH_arm64' "${WORK_DIR}/xnu/makedefs/MakeInc.def"
+          KC_LINK
+          sed -i '' '/^[[:space:]]*patches[[:space:]]*$/r /tmp/prepare-kc-link.sh' dxb/build.sh
+          test "$(grep -c 'LDFLAGS_KERNEL_ONLY_SUBARCH_arm64 = -Wl,-add_split_seg_info' dxb/build.sh)" = "1"
           MACHINE_LOWER=$(echo "$MACHINE_CONFIG" | tr '[:upper:]' '[:lower:]')
           echo "MACHINE_LOWER=$MACHINE_LOWER" >> "$GITHUB_ENV"
           if [ "$MACHINE_CONFIG" = "SENNA" ]; then
